@@ -6,18 +6,36 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gertv/go-freckle"
+	"github.com/samuel/go-librato/librato"
 )
 
 const (
-	appName         = "DoesNotMatter"
-	appTokenVarName = "FRECKLE_APP_TOKEN"
+	freckleAppName      = "DoesNotMatter"
+	freckleTokenVarName = "FRECKLE_APP_TOKEN"
+
+	libratoAccountVarName  = "LIBRATO_ACCOUNT"
+	libratoTokenVarName    = "LIBRATO_TOKEN"
+	libratoBaseName        = "FreckleAPI"
+	libratoCatProjects     = "projects"
+	libratoCatParticipants = "participants"
 
 	exitCodeOk = iota
 	exitCodeNotOk
 )
+
+func sanitizeMetricName(s string) string {
+	s = strings.Replace(s, " ", "-", -1)
+	s = strings.Replace(s, "/", "-", -1)
+	s = strings.Replace(s, "\\", "-", -1)
+	s = strings.Replace(s, "#", "", -1)
+	s = strings.Replace(s, "(", "", -1)
+	s = strings.Replace(s, ")", "", -1)
+	return s
+}
 
 // ParticipantKpi represents a freckle Participant enriched with Billable and Unbillable information.
 type ParticipantKpi struct {
@@ -47,6 +65,27 @@ func (p ParticipantKpi) VerboseString(prj ProjectKpi) string {
 		float64(p.BillableMinutes)/60, billablePercent,
 		float64(p.UnbillableMinutes)/60, unbillablePercent,
 	)
+}
+
+// RegisterMetrics regiters project metrics and update their value
+func (p ParticipantKpi) RegisterMetrics(m *librato.Metrics, source string) {
+	source = sanitizeMetricName(source)
+
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.%s.UnbillableMinutes.%s-%s", libratoBaseName, libratoCatParticipants, p.FirstName, p.LastName),
+			Source: source,
+			Count:  1,
+			Sum:    float64(p.UnbillableMinutes),
+		})
+
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.%s.BillableMinutes.%s-%s", libratoBaseName, libratoCatParticipants, p.FirstName, p.LastName),
+			Source: source,
+			Count:  1,
+			Sum:    float64(p.BillableMinutes),
+		})
 }
 
 // GetParticipantKpis calculates slice of ParticipantKpi based on a slice of Freckle Entry.
@@ -225,6 +264,43 @@ func (pi ProjectKpi) String() string {
 		float64(pi.UnbillableMinutes)/60)
 }
 
+// RegisterMetrics registers project metrics and set their value
+func (pi ProjectKpi) RegisterMetrics(m *librato.Metrics) {
+	prjName := sanitizeMetricName(pi.Name)
+
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.%s.UnbillableMinutes", libratoBaseName, libratoCatProjects),
+			Source: prjName,
+			Count:  1,
+			Sum:    float64(pi.UnbillableMinutes),
+		})
+
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.%s.BillableMinutes", libratoBaseName, libratoCatProjects),
+			Source: prjName,
+			Count:  1,
+			Sum:    float64(pi.BillableMinutes),
+		})
+
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.%s.InvoicedMinutes", libratoBaseName, libratoCatProjects),
+			Source: prjName,
+			Count:  1,
+			Sum:    float64(pi.InvoicedMinutes),
+		})
+
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.%s.InvoicedAmount", libratoBaseName, libratoCatProjects),
+			Source: prjName,
+			Count:  1,
+			Sum:    float64(pi.GetInvoicedTotal()),
+		})
+}
+
 // ProjectPeriodKpi represents the project information for a period.
 type ProjectPeriodKpi struct {
 	Period       time.Time
@@ -295,14 +371,21 @@ func GetProjectKpiPerMonth(p ProjectKpi) ([]ProjectPeriodKpi, error) {
 
 func main() {
 	// Grab Freckle app token from the environment
-	freckleAppToken := os.Getenv(appTokenVarName)
+	freckleAppToken := os.Getenv(freckleTokenVarName)
 	if freckleAppToken == "" {
-		fmt.Println(appTokenVarName, "environment variable is not set")
+		fmt.Println(freckleTokenVarName, "environment variable is not set")
 		os.Exit(exitCodeNotOk)
 	}
 
-	f := freckle.LetsFreckle(appName, freckleAppToken)
+	f := freckle.LetsFreckle(freckleAppName, freckleAppToken)
 	//f.Debug(true)
+
+	libratoAccount := os.Getenv(libratoAccountVarName)
+	libratoToken := os.Getenv(libratoTokenVarName)
+	metrics := &librato.Metrics{
+		Counters: []librato.Metric{},
+		Gauges:   []interface{}{},
+	}
 
 	var projects []ProjectKpi
 
@@ -347,8 +430,11 @@ func main() {
 	for _, project := range projects {
 		// Print out the project information
 		fmt.Println(project.String())
+		project.RegisterMetrics(metrics)
+
 		for _, p := range GetParticipantKpis(project.DetailedEntries) {
 			fmt.Println("\t", p.VerboseString(project))
+			p.RegisterMetrics(metrics, project.Name)
 		}
 
 		projectKpiPerMonth, err := GetProjectKpiPerMonth(project)
@@ -363,6 +449,15 @@ func main() {
 			for _, participant := range ppm.Participants {
 				fmt.Println("\t\t\t", participant.String())
 			}
+		}
+	}
+
+	// Only report to librato if we found the environment variables
+	if libratoAccount != "" && libratoToken != "" {
+		libratoClient := &librato.Client{libratoAccount, libratoToken}
+		err := libratoClient.PostMetrics(metrics)
+		if err != nil {
+			fmt.Println("An error occured while POSTing the metrics to librato", err)
 		}
 	}
 }
