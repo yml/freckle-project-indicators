@@ -17,11 +17,12 @@ const (
 	freckleAppName      = "DoesNotMatter"
 	freckleTokenVarName = "FRECKLE_APP_TOKEN"
 
-	libratoAccountVarName  = "LIBRATO_ACCOUNT"
-	libratoTokenVarName    = "LIBRATO_TOKEN"
-	libratoBaseName        = "FreckleAPI"
-	libratoCatProjects     = "projects"
-	libratoCatParticipants = "participants"
+	libratoAccountVarName        = "LIBRATO_ACCOUNT"
+	libratoTokenVarName          = "LIBRATO_TOKEN"
+	libratoBaseName              = "FreckleAPI"
+	libratoCatProjects           = "projects"
+	libratoCatParticipants       = "participants"
+	libratoCatYearlyParticipants = "yearlyParticipants"
 
 	exitCodeOk = iota
 	exitCodeNotOk
@@ -68,12 +69,12 @@ func (p ParticipantKpi) VerboseString(prj ProjectKpi) string {
 }
 
 // RegisterMetrics regiters project metrics and update their value
-func (p ParticipantKpi) RegisterMetrics(m *librato.Metrics, source string) {
+func (p ParticipantKpi) RegisterMetrics(m *librato.Metrics, prefix, source string) {
 	source = sanitizeMetricName(source)
 
 	m.Gauges = append(m.Gauges,
 		librato.Gauge{
-			Name:   fmt.Sprintf("%s.%s.UnbillableMinutes.%s-%s", libratoBaseName, libratoCatParticipants, p.FirstName, p.LastName),
+			Name:   fmt.Sprintf("%s.UnbillableMinutes.%s-%s", prefix, p.FirstName, p.LastName),
 			Source: source,
 			Count:  1,
 			Sum:    float64(p.UnbillableMinutes),
@@ -81,7 +82,7 @@ func (p ParticipantKpi) RegisterMetrics(m *librato.Metrics, source string) {
 
 	m.Gauges = append(m.Gauges,
 		librato.Gauge{
-			Name:   fmt.Sprintf("%s.%s.BillableMinutes.%s-%s", libratoBaseName, libratoCatParticipants, p.FirstName, p.LastName),
+			Name:   fmt.Sprintf("%s.BillableMinutes.%s-%s", prefix, p.FirstName, p.LastName),
 			Source: source,
 			Count:  1,
 			Sum:    float64(p.BillableMinutes),
@@ -130,18 +131,62 @@ func (slice ParticipantKpis) Swap(i, j int) {
 	slice[i], slice[j] = slice[j], slice[i]
 }
 
+// TimeAggregater represents the set of method we need to extract information from time.Time
+type TimeAggregater interface {
+	GetInt(time.Time) (int, error)
+	GetPeriod(time.Time) time.Time
+	GetString(time.Time) string
+}
+
+// MonthAgg reprents a monthly TimeAggregater
+type MonthAgg struct{}
+
+// GetInt returns the int composed by the Year and a double digit Month
+func (m MonthAgg) GetInt(t time.Time) (int, error) {
+	return strconv.Atoi(fmt.Sprintf("%d%02d", t.Year(), t.Month()))
+}
+
+// GetString returns the string composed by the Year and a double digit Month separated by a `-`
+func (m MonthAgg) GetString(t time.Time) string {
+	return fmt.Sprintf("%d-%02d", t.Year(), t.Month())
+}
+
+// GetPeriod returns the time.Time truncated after the Year and Month
+func (m MonthAgg) GetPeriod(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), 0, 0, 0, 0, 0, time.UTC)
+}
+
+// YearAgg reprents a monthly TimeAggregater
+type YearAgg struct{}
+
+// GetInt returns the int composed by the Year
+func (y YearAgg) GetInt(t time.Time) (int, error) {
+	return strconv.Atoi(fmt.Sprintf("%d", t.Year()))
+}
+
+// GetString returns the string composed by the Year
+func (y YearAgg) GetString(t time.Time) string {
+	return fmt.Sprintf("%d", t.Year())
+}
+
+// GetPeriod returns the time.Time truncated after the Year
+func (y YearAgg) GetPeriod(t time.Time) time.Time {
+	return time.Date(t.Year(), 0, 0, 0, 0, 0, 0, time.UTC)
+}
+
 // InvoicePeriodKpi is used to aggregate invoice information on a period
 type InvoicePeriodKpi struct {
-	Period time.Time
-	Amount float64
+	TimeAgg TimeAggregater
+	Period  time.Time
+	Amount  float64
 }
 
 func (ik InvoicePeriodKpi) String() string {
-	return fmt.Sprintf("%d-%02d $%.2f invoiced", ik.Period.Year(), ik.Period.Month(), ik.Amount)
+	return fmt.Sprintf("%s $%.2f invoiced", ik.TimeAgg.GetString(ik.Period), ik.Amount)
 }
 
-// GetInvoiceKpiPerMonth calculates a slice of InvoicePeriodKpi based on a slice of freckle invoice.
-func GetInvoiceKpiPerMonth(fis []freckle.Invoice) ([]InvoicePeriodKpi, error) {
+// GetInvoiceKpiPerPeriod calculates a slice of InvoicePeriodKpi based on a slice of freckle invoice.
+func GetInvoiceKpiPerPeriod(tagg TimeAggregater, fis []freckle.Invoice) ([]InvoicePeriodKpi, error) {
 	agrregateInvoices := make(map[int]InvoicePeriodKpi)
 	var keys []int
 	var key int
@@ -150,7 +195,7 @@ func GetInvoiceKpiPerMonth(fis []freckle.Invoice) ([]InvoicePeriodKpi, error) {
 		if err != nil {
 			return nil, err
 		}
-		key, err = strconv.Atoi(fmt.Sprintf("%d%02d", t.Year(), t.Month()))
+		key, err = tagg.GetInt(t)
 		if err != nil {
 			return nil, err
 		}
@@ -159,8 +204,9 @@ func GetInvoiceKpiPerMonth(fis []freckle.Invoice) ([]InvoicePeriodKpi, error) {
 		if !ok {
 			keys = append(keys, key)
 		}
-		ik.Period = time.Date(t.Year(), t.Month(), 0, 0, 0, 0, 0, time.UTC)
+		ik.Period = tagg.GetPeriod(t)
 		ik.Amount += invoice.TotalAmount
+		ik.TimeAgg = tagg
 
 		agrregateInvoices[key] = ik
 	}
@@ -173,14 +219,25 @@ func GetInvoiceKpiPerMonth(fis []freckle.Invoice) ([]InvoicePeriodKpi, error) {
 	return sik, nil
 }
 
+// GetInvoiceKpiPerMonth calculates a slice of InvoicePeriodKpi based on a slice of freckle invoice.
+func GetInvoiceKpiPerMonth(fis []freckle.Invoice) ([]InvoicePeriodKpi, error) {
+	return GetInvoiceKpiPerPeriod(MonthAgg{}, fis)
+}
+
+// GetInvoiceKpiPerYear calculates a slice of InvoicePeriodKpi based on a slice of freckle invoice.
+func GetInvoiceKpiPerYear(fis []freckle.Invoice) ([]InvoicePeriodKpi, error) {
+	return GetInvoiceKpiPerPeriod(YearAgg{}, fis)
+}
+
 // ParticipantsPeriod is used to aggregate a list of ParticipantKpi over a period.
 type ParticipantsPeriod struct {
+	TimeAgg      TimeAggregater
 	Period       time.Time
 	Participants ParticipantKpis
 }
 
-// GetParticipantsPeriodPerMonth Builds a slice of ParticipantsPeriod over the period of the given freckle entries.
-func GetParticipantsPeriodPerMonth(fes []freckle.Entry) ([]ParticipantsPeriod, error) {
+// GetParticipantsPeriodPerPeriod Builds a slice of ParticipantsPeriod over the period of the given freckle entries.
+func GetParticipantsPeriodPerPeriod(tagg TimeAggregater, fes []freckle.Entry) ([]ParticipantsPeriod, error) {
 	dedupParticipants := make(map[int]ParticipantsPeriod)
 	var keys []int
 	var key int
@@ -190,7 +247,7 @@ func GetParticipantsPeriodPerMonth(fes []freckle.Entry) ([]ParticipantsPeriod, e
 		if err != nil {
 			return nil, err
 		}
-		key, err = strconv.Atoi(fmt.Sprintf("%d%02d", t.Year(), t.Month()))
+		key, err = tagg.GetInt(t)
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +256,8 @@ func GetParticipantsPeriodPerMonth(fes []freckle.Entry) ([]ParticipantsPeriod, e
 		if !ok {
 			keys = append(keys, key)
 		}
-		pk.Period = time.Date(t.Year(), t.Month(), 0, 0, 0, 0, 0, time.UTC)
+		pk.Period = tagg.GetPeriod(t)
+		pk.TimeAgg = tagg
 
 		// Check if the ParticipantKpi already exist in the slice
 		foundFlag := false
@@ -233,6 +291,16 @@ func GetParticipantsPeriodPerMonth(fes []freckle.Entry) ([]ParticipantsPeriod, e
 		participants = append(participants, v)
 	}
 	return participants, nil
+}
+
+// GetParticipantsPeriodPerMonth Builds a slice of ParticipantsPeriod over months for the given freckle entries.
+func GetParticipantsPeriodPerMonth(fes []freckle.Entry) ([]ParticipantsPeriod, error) {
+	return GetParticipantsPeriodPerPeriod(MonthAgg{}, fes)
+}
+
+// GetParticipantsPeriodPerYear Builds a slice of ParticipantsPeriod over years for the given freckle entries.
+func GetParticipantsPeriodPerYear(fes []freckle.Entry) ([]ParticipantsPeriod, error) {
+	return GetParticipantsPeriodPerPeriod(YearAgg{}, fes)
 }
 
 // ProjectKpi is a freckle project enriched with the related entries
@@ -303,23 +371,57 @@ func (pi ProjectKpi) RegisterMetrics(m *librato.Metrics) {
 
 // ProjectPeriodKpi represents the project information for a period.
 type ProjectPeriodKpi struct {
+	Name         string
+	TimeAgg      TimeAggregater
 	Period       time.Time
 	Invoice      InvoicePeriodKpi
 	Participants []ParticipantKpi
 }
 
 func (pp ProjectPeriodKpi) String() string {
-	return fmt.Sprintf("%d-%02d $%.2f invoiced", pp.Period.Year(), pp.Period.Month(), pp.Invoice.Amount)
+	return fmt.Sprintf("%s $%.2f invoiced", pp.TimeAgg.GetString(pp.Period), pp.Invoice.Amount)
 }
 
-// GetProjectKpiPerMonth returns the slice of ProjectPeriodKpi.
-func GetProjectKpiPerMonth(p ProjectKpi) ([]ProjectPeriodKpi, error) {
-	invoiceAmonthPerMonth, err := GetInvoiceKpiPerMonth(p.Invoices)
+// RegisterMetrics registers project metrics and update their value
+func (pp ProjectPeriodKpi) RegisterMetrics(m *librato.Metrics, prefix string) {
+	prjName := sanitizeMetricName(pp.Name)
+	source := pp.TimeAgg.GetString(pp.Period)
+
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.InvoicedAmount.%s", prefix, prjName),
+			Source: source,
+			Count:  1,
+			Sum:    float64(pp.Invoice.Amount),
+		})
+
+	for _, p := range pp.Participants {
+		m.Gauges = append(m.Gauges,
+			librato.Gauge{
+				Name:   fmt.Sprintf("%s.UnbillableMinutes.%s.%s-%s", prefix, prjName, p.FirstName, p.LastName),
+				Source: source,
+				Count:  1,
+				Sum:    float64(p.UnbillableMinutes),
+			})
+
+		m.Gauges = append(m.Gauges,
+			librato.Gauge{
+				Name:   fmt.Sprintf("%s.BillableMinutes.%s.%s-%s", prefix, prjName, p.FirstName, p.LastName),
+				Source: source,
+				Count:  1,
+				Sum:    float64(p.BillableMinutes),
+			})
+	}
+}
+
+// GetProjectKpiPerPeriod returns the slice of ProjectPeriodKpi.
+func GetProjectKpiPerPeriod(tagg TimeAggregater, p ProjectKpi) ([]ProjectPeriodKpi, error) {
+	invoiceAmonthPerPeriod, err := GetInvoiceKpiPerPeriod(tagg, p.Invoices)
 	if err != nil {
 		return nil, err
 	}
 
-	participantKpiPerMonth, err := GetParticipantsPeriodPerMonth(p.DetailedEntries)
+	participantKpiPerPeriod, err := GetParticipantsPeriodPerPeriod(tagg, p.DetailedEntries)
 	if err != nil {
 		return nil, err
 	}
@@ -328,10 +430,9 @@ func GetProjectKpiPerMonth(p ProjectKpi) ([]ProjectPeriodKpi, error) {
 	var keys []int
 	var key int
 
-	// Acummulates the invoices for the ProjectKpi per month
-	for _, invoice := range invoiceAmonthPerMonth {
-		key, err = strconv.Atoi(
-			fmt.Sprintf("%d%02d", invoice.Period.Year(), invoice.Period.Month()))
+	// Acummulates the invoices for the ProjectKpi per period
+	for _, invoice := range invoiceAmonthPerPeriod {
+		key, err = invoice.TimeAgg.GetInt(invoice.Period)
 		if err != nil {
 			return nil, err
 		}
@@ -339,15 +440,16 @@ func GetProjectKpiPerMonth(p ProjectKpi) ([]ProjectPeriodKpi, error) {
 		if !ok {
 			keys = append(keys, key)
 		}
+		ppm.Name = p.Name
+		ppm.TimeAgg = tagg
 		ppm.Period = invoice.Period
 		ppm.Invoice = invoice
 		mapProjectKpiPerMonth[key] = ppm
 	}
 
-	// Accumulates the particpants for the ProjectKpi per month
-	for _, participants := range participantKpiPerMonth {
-		key, err = strconv.Atoi(
-			fmt.Sprintf("%d%02d", participants.Period.Year(), participants.Period.Month()))
+	// Accumulates the particpants for the ProjectKpi per period
+	for _, participants := range participantKpiPerPeriod {
+		key, err = participants.TimeAgg.GetInt(participants.Period)
 		if err != nil {
 			return nil, err
 		}
@@ -355,6 +457,8 @@ func GetProjectKpiPerMonth(p ProjectKpi) ([]ProjectPeriodKpi, error) {
 		if !ok {
 			keys = append(keys, key)
 		}
+		ppm.Name = p.Name
+		ppm.TimeAgg = tagg
 		ppm.Period = participants.Period
 		ppm.Participants = participants.Participants
 		mapProjectKpiPerMonth[key] = ppm
@@ -367,6 +471,16 @@ func GetProjectKpiPerMonth(p ProjectKpi) ([]ProjectPeriodKpi, error) {
 		projectsPeriod = append(projectsPeriod, mapProjectKpiPerMonth[v])
 	}
 	return projectsPeriod, nil
+}
+
+// GetProjectKpiPerMonth returns the slice of ProjectPeriodKpi.
+func GetProjectKpiPerMonth(p ProjectKpi) ([]ProjectPeriodKpi, error) {
+	return GetProjectKpiPerPeriod(MonthAgg{}, p)
+}
+
+// GetProjectKpiPerYear returns the slice of ProjectPeriodKpi.
+func GetProjectKpiPerYear(p ProjectKpi) ([]ProjectPeriodKpi, error) {
+	return GetProjectKpiPerPeriod(YearAgg{}, p)
 }
 
 func main() {
@@ -434,27 +548,48 @@ func main() {
 
 		for _, p := range GetParticipantKpis(project.DetailedEntries) {
 			fmt.Println("\t", p.VerboseString(project))
-			p.RegisterMetrics(metrics, project.Name)
+			p.RegisterMetrics(
+				metrics,
+				fmt.Sprintf("%s.%s", libratoBaseName, libratoCatParticipants),
+				project.Name)
 		}
 
-		projectKpiPerMonth, err := GetProjectKpiPerMonth(project)
+		// projectKpiPerPeriod, err := GetProjectKpiPerMonth(project)
+		// if err != nil {
+		// 	log.Fatal(err)
+		// }
+
+		// // Print out the per month information
+		// fmt.Println("\n\tbreakdown per month")
+		// for _, ppm := range projectKpiPerPeriod {
+		// 	fmt.Println("\t\t", ppm.String())
+		// 	for _, participant := range ppm.Participants {
+		// 		fmt.Println("\t\t\t", participant.String())
+		// 	}
+		// }
+
+		projectKpiPerPeriod, err := GetProjectKpiPerYear(project)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		// Print out the per month information
-		fmt.Println("\n\tbreakdown per month")
-		for _, ppm := range projectKpiPerMonth {
+		// Print out the per year information
+		fmt.Println("\n\tbreakdown per year")
+		for _, ppm := range projectKpiPerPeriod {
 			fmt.Println("\t\t", ppm.String())
+			ppm.RegisterMetrics(
+				metrics,
+				fmt.Sprintf("%s.%s", libratoBaseName, libratoCatYearlyParticipants))
 			for _, participant := range ppm.Participants {
 				fmt.Println("\t\t\t", participant.String())
 			}
 		}
+
 	}
 
 	// Only report to librato if we found the environment variables
 	if libratoAccount != "" && libratoToken != "" {
-		libratoClient := &librato.Client{libratoAccount, libratoToken}
+		libratoClient := &librato.Client{Username: libratoAccount, Token: libratoToken}
 		err := libratoClient.PostMetrics(metrics)
 		if err != nil {
 			fmt.Println("An error occured while POSTing the metrics to librato", err)
