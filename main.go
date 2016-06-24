@@ -153,7 +153,7 @@ func (m MonthAgg) GetString(t time.Time) string {
 
 // GetPeriod returns the time.Time truncated after the Year and Month
 func (m MonthAgg) GetPeriod(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), 0, 0, 0, 0, 0, time.UTC)
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
 // YearAgg reprents a monthly TimeAggregater
@@ -171,7 +171,7 @@ func (y YearAgg) GetString(t time.Time) string {
 
 // GetPeriod returns the time.Time truncated after the Year
 func (y YearAgg) GetPeriod(t time.Time) time.Time {
-	return time.Date(t.Year(), 0, 0, 0, 0, 0, 0, time.UTC)
+	return time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 }
 
 // InvoicePeriodKpi is used to aggregate invoice information on a period
@@ -395,23 +395,27 @@ func (pp ProjectPeriodKpi) RegisterMetrics(m *librato.Metrics, prefix string) {
 			Sum:    float64(pp.Invoice.Amount),
 		})
 
+	var billableMin int
+	var unbillableMin int
 	for _, p := range pp.Participants {
-		m.Gauges = append(m.Gauges,
-			librato.Gauge{
-				Name:   fmt.Sprintf("%s.UnbillableMinutes.%s.%s-%s", prefix, prjName, p.FirstName, p.LastName),
-				Source: source,
-				Count:  1,
-				Sum:    float64(p.UnbillableMinutes),
-			})
-
-		m.Gauges = append(m.Gauges,
-			librato.Gauge{
-				Name:   fmt.Sprintf("%s.BillableMinutes.%s.%s-%s", prefix, prjName, p.FirstName, p.LastName),
-				Source: source,
-				Count:  1,
-				Sum:    float64(p.BillableMinutes),
-			})
+		billableMin += p.BillableMinutes
+		unbillableMin += p.UnbillableMinutes
 	}
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.UnbillableMinutes.%s", prefix, prjName),
+			Source: source,
+			Count:  1,
+			Sum:    float64(unbillableMin),
+		})
+
+	m.Gauges = append(m.Gauges,
+		librato.Gauge{
+			Name:   fmt.Sprintf("%s.BillableMinutes.%s", prefix, prjName),
+			Source: source,
+			Count:  1,
+			Sum:    float64(billableMin),
+		})
 }
 
 // GetProjectKpiPerPeriod returns the slice of ProjectPeriodKpi.
@@ -584,7 +588,6 @@ func main() {
 				fmt.Println("\t\t\t", participant.String())
 			}
 		}
-
 	}
 
 	// Only report to librato if we found the environment variables
