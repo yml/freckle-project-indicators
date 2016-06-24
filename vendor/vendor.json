@@ -1,0 +1,37 @@
+{
+	"comment": "",
+	"ignore": "",
+	"package": [
+		{
+			"checksumSHA1": "39c+shSLmvturiMmkG4MjIFQQB4=",
+			"path": "github.com/davecgh/go-spew/spew",
+			"revision": "5215b55f46b2b919f50a1df0eaa5886afe4e3b3d",
+			"revisionTime": "2015-11-05T21:09:06Z"
+		},
+		{
+			"checksumSHA1": "WlXK/TcUiSYz/gud5AFTX88BcPc=",
+			"path": "github.com/gertv/go-freckle",
+			"revision": "47e1eaa5b2d8b374e4c671147267fc010fc6804e",
+			"revisionTime": "2016-06-14T16:46:25Z"
+		},
+		{
+			"checksumSHA1": "RZOdTSZN/PgcTqko5LzIAzw+UT4=",
+			"path": "github.com/pmezard/go-difflib/difflib",
+			"revision": "792786c7400a136282c1664665ae0a8db921c6c2",
+			"revisionTime": "2016-01-10T10:55:54Z"
+		},
+		{
+			"checksumSHA1": "OJLCIl0jNQb/qECQLDHXv6edKD8=",
+			"path": "github.com/samuel/go-librato/librato",
+			"revision": "b2d16c45782debbd314c9924d19c4b2a08935b7f",
+			"revisionTime": "2016-06-23T21:04:27Z"
+		},
+		{
+			"checksumSHA1": "9x9U6gHs3Rd8ENYSIHXgTazYiEA=",
+			"path": "github.com/stretchr/testify/assert",
+			"revision": "f390dcf405f7b83c997eac1b06768bb9f44dec18",
+			"revisionTime": "2016-01-09T20:38:47Z"
+		}
+	],
+	"rootPath": "github.com/yml/freckle-project-indicators"
+}

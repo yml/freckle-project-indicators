@@ -31,7 +31,10 @@ go get github.com/yml/freckle-project-indicators
 In order to use this application you need to set your Freckle API Token as environment variable.
 
 ```
-FRECKLE_APP_TOKEN="<API TOKEN GOES HERE>" freckle-project-indicators "noodle.com"
+FRECKLE_APP_TOKEN="<API TOKEN GOES HERE>" \
+LIBRATO_ACCOUNT="<your-account@example.com>" \
+LIBRATO_TOKEN="<API TOKEN GOES HERE>" \
+freckle-project-indicators "<ProjectName>"
 ```
 
 You can restrict the report to a list a project by passing them as arguments. If no project are specified the report will extract information for all of them.
