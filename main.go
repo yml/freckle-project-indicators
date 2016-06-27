@@ -492,6 +492,14 @@ func GetProjectKpiPerYear(p ProjectKpi) ([]ProjectPeriodKpi, error) {
 var (
 	libratoFlag bool
 	timeAggFlag string
+	Usage       = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Options :\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nExample:\n")
+		fmt.Fprintf(os.Stderr, "  You can restict the extraction to a project list\n")
+		fmt.Fprintf(os.Stderr, "  %s -period=month \"foo project\" \"bar project\"\n", os.Args[0])
+	}
 )
 
 func init() {
@@ -500,6 +508,7 @@ func init() {
 }
 
 func main() {
+	flag.Usage = Usage
 	flag.Parse()
 	// Grab Freckle app token from the environment
 	freckleAppToken := os.Getenv(freckleTokenVarName)
