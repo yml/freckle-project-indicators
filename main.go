@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -23,7 +24,8 @@ const (
 	libratoCatProjects           = "projects"
 	libratoCatParticipants       = "participants"
 	libratoCatYearlyParticipants = "yearlyParticipants"
-
+)
+const (
 	exitCodeOk = iota
 	exitCodeNotOk
 )
@@ -487,7 +489,18 @@ func GetProjectKpiPerYear(p ProjectKpi) ([]ProjectPeriodKpi, error) {
 	return GetProjectKpiPerPeriod(YearAgg{}, p)
 }
 
+var (
+	libratoFlag bool
+	timeAggFlag string
+)
+
+func init() {
+	flag.BoolVar(&libratoFlag, "librato", false, "Push metrics to librato")
+	flag.StringVar(&timeAggFlag, "period", "year", "Time period you want to build the aggregation on : month, year")
+}
+
 func main() {
+	flag.Parse()
 	// Grab Freckle app token from the environment
 	freckleAppToken := os.Getenv(freckleTokenVarName)
 	if freckleAppToken == "" {
@@ -513,7 +526,7 @@ func main() {
 		fmt.Println("An error occurred while getting the project list:\n\t", err)
 	}
 
-	projectNames := os.Args[1:]
+	projectNames := flag.Args()
 	stopWhenZero := len(projectNames)
 
 	for project := range projectsPage.AllProjects() {
@@ -558,40 +571,48 @@ func main() {
 				project.Name)
 		}
 
-		// projectKpiPerPeriod, err := GetProjectKpiPerMonth(project)
-		// if err != nil {
-		// 	log.Fatal(err)
-		// }
-
-		// // Print out the per month information
-		// fmt.Println("\n\tbreakdown per month")
-		// for _, ppm := range projectKpiPerPeriod {
-		// 	fmt.Println("\t\t", ppm.String())
-		// 	for _, participant := range ppm.Participants {
-		// 		fmt.Println("\t\t\t", participant.String())
-		// 	}
-		// }
-
-		projectKpiPerPeriod, err := GetProjectKpiPerYear(project)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// Print out the per year information
-		fmt.Println("\n\tbreakdown per year")
-		for _, ppm := range projectKpiPerPeriod {
-			fmt.Println("\t\t", ppm.String())
-			ppm.RegisterMetrics(
-				metrics,
-				fmt.Sprintf("%s.%s", libratoBaseName, libratoCatYearlyParticipants))
-			for _, participant := range ppm.Participants {
-				fmt.Println("\t\t\t", participant.String())
+		switch timeAggFlag {
+		case "month":
+			projectKpiPerPeriod, err := GetProjectKpiPerMonth(project)
+			if err != nil {
+				log.Fatal(err)
 			}
+
+			// Print out the per month information
+			fmt.Println("\n\tbreakdown per month")
+			for _, ppm := range projectKpiPerPeriod {
+				fmt.Println("\t\t", ppm.String())
+				for _, participant := range ppm.Participants {
+					fmt.Println("\t\t\t", participant.String())
+				}
+			}
+		case "year":
+
+			projectKpiPerPeriod, err := GetProjectKpiPerYear(project)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			// Print out the per year information
+			fmt.Println("\n\tbreakdown per year")
+			for _, ppm := range projectKpiPerPeriod {
+				fmt.Println("\t\t", ppm.String())
+				ppm.RegisterMetrics(
+					metrics,
+					fmt.Sprintf("%s.%s", libratoBaseName, libratoCatYearlyParticipants))
+				for _, participant := range ppm.Participants {
+					fmt.Println("\t\t\t", participant.String())
+				}
+			}
+		default:
+			fmt.Println("\nTime period options are : month or year")
+			fmt.Println(timeAggFlag, "is not a valid choice.")
+			os.Exit(exitCodeNotOk)
 		}
 	}
 
 	// Only report to librato if we found the environment variables
-	if libratoAccount != "" && libratoToken != "" {
+	if libratoFlag && libratoAccount != "" && libratoToken != "" {
 		libratoClient := &librato.Client{Username: libratoAccount, Token: libratoToken}
 		err := libratoClient.PostMetrics(metrics)
 		if err != nil {
