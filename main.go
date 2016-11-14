@@ -34,6 +34,7 @@ func sanitizeMetricName(s string) string {
 	s = strings.Replace(s, " ", "-", -1)
 	s = strings.Replace(s, "/", "-", -1)
 	s = strings.Replace(s, "\\", "-", -1)
+	s = strings.Replace(s, "'", "-", -1)
 	s = strings.Replace(s, "#", "", -1)
 	s = strings.Replace(s, "(", "", -1)
 	s = strings.Replace(s, ")", "", -1)
